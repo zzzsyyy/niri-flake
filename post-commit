@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+if [[ ! -e .git/rebase-merge/done ]]; then
+
+# buffer the output of nix eval through a temporary file
+# because that way, we can move it to the new place atomically
+# vs clearing the file during eval.
+
+# in other words, this is reimplementing sponge(1)
+# why not just use sponge? because this runs in CI (which doesn't have sponge)
+tmp="$(mktemp)"
+
+nix eval --raw "git+file:.?ref=HEAD#lib.internal.docs-markdown" > $tmp
+
+# GitHub Actions doesn't seem to have a HEAD ref (???)
+if [ $? -ne 0 ]; then
+echo "git didn't like the HEAD i gave it; falling back to working directory" >&2
+nix eval --raw .#lib.internal.docs-markdown > $tmp
+fi
+
+mv $tmp docs.md
+
+nix eval --raw --file fetch-refs.nix > refs.nix
+
+git diff --quiet docs.md refs.nix
+if [ $? -ne 0 ]; then
+
+git add docs.md
+git add refs.nix
+git commit --no-verify --amend --no-edit
+
+# restore the docs from the working directory if you commit with unstaged changes
+nix eval --no-warn-dirty --raw .#lib.internal.docs-markdown > $tmp
+
+mv $tmp docs.md
+
+fi
+
+fi
